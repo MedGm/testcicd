@@ -1,23 +1,19 @@
 # Multi-stage build for Spring Boot application
-FROM openjdk:17-jdk-slim as builder
+FROM maven:3.9-eclipse-temurin-17 as builder
 
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-
-# Make Maven wrapper executable
-RUN chmod +x mvnw
+# Copy pom.xml first for better layer caching
+COPY pom.xml ./
 
 # Download dependencies
-RUN ./mvnw dependency:go-offline -B
+RUN mvn dependency:go-offline -B
 
 # Copy source code
 COPY src ./src
 
 # Build the application
-RUN ./mvnw clean package -DskipTests
+RUN mvn clean package -DskipTests
 
 # Runtime stage
 FROM openjdk:17-jre-slim
