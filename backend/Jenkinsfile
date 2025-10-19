@@ -87,10 +87,23 @@ pipeline {
         stage('Security Scan') {
             steps {
                 script {
-                    sh '''
-                        echo "Running OWASP dependency check..."
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn org.owasp:dependency-check-maven:check
-                    '''
+                    withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+                        sh '''
+                            echo "Running OWASP dependency check with persistent cache..."
+                            mkdir -p "$WORKSPACE/.dc-data"
+                            DOCKER_FLAGS="--rm --volumes-from jenkins -w \"$WORKSPACE/backend\" -v \"$WORKSPACE/.dc-data\":/usr/share/dependency-check/data"
+                            MVN_FLAGS="-DdataDirectory=/usr/share/dependency-check/data"
+                            if [ -n "$NVD_API_KEY" ]; then
+                              DOCKER_FLAGS="$DOCKER_FLAGS -e NVD_API_KEY=$NVD_API_KEY"
+                              MVN_FLAGS="$MVN_FLAGS -Dnvd.api.key=$NVD_API_KEY"
+                            else
+                              echo "No NVD API key configured (credential id: nvd-api-key). The first run may be slow."
+                            fi
+                            # Speed optimizations: disable slower analyzers not needed here
+                            MVN_FLAGS="$MVN_FLAGS -Danalyzer.retirejs.enabled=false -Danalyzer.node.audit.skip=true -Danalyzer.nexus.skip=true"
+                            docker run $DOCKER_FLAGS maven:3.9-eclipse-temurin-17 mvn org.owasp:dependency-check-maven:check $MVN_FLAGS
+                        '''
+                    }
                 }
             }
             post {
