@@ -62,19 +62,23 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        echo "Running SonarQube analysis..."
-                        COV_ARG=""
-                        if [ -f "$WORKSPACE/backend/target/site/jacoco/jacoco.xml" ]; then
-                          COV_ARG="-Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
+                        if [ -d "$WORKSPACE/backend/src/main/java" ]; then
+                          echo "Running SonarQube analysis..."
+                          COV_ARG=""
+                          if [ -f "$WORKSPACE/backend/target/site/jacoco/jacoco.xml" ]; then
+                            COV_ARG="-Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
+                          fi
+                          docker run --rm --volumes-from jenkins --network host -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn sonar:sonar \
+                              -Dsonar.projectKey=real-estate-backend \
+                              -Dsonar.host.url=http://localhost:9000 \
+                              -Dsonar.login=${SONARQUBE_TOKEN} \
+                              -Dsonar.java.binaries=target/classes \
+                              -Dsonar.sources=src/main/java \
+                              -Dsonar.tests=src/test/java \
+                              $COV_ARG
+                        else
+                          echo "No sources under backend/src/main/java; skipping SonarQube analysis."
                         fi
-                        docker run --rm --volumes-from jenkins --network host -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn sonar:sonar \
-                            -Dsonar.projectKey=real-estate-backend \
-                            -Dsonar.host.url=http://localhost:9000 \
-                            -Dsonar.login=${SONARQUBE_TOKEN} \
-                            -Dsonar.java.binaries=target/classes \
-                            -Dsonar.sources=src/main/java \
-                            -Dsonar.tests=src/test/java \
-                            $COV_ARG
                     '''
                 }
             }
