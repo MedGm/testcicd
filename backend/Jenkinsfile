@@ -1,0 +1,193 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_REGISTRY = 'medgm'
+        DOCKER_IMAGE_NAME = 'real-estate-backend'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        SONARQUBE_URL = 'http://sonarqube:9000'
+        SONARQUBE_TOKEN = credentials('sonarqube-token')
+        DOCKER_CREDENTIALS = 'docker-registry-creds'
+        GITHUB_CREDENTIALS = 'github-creds'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+        
+        stage('Build & Test') {
+            steps {
+                script {
+                    sh '''
+                        echo "Building Spring Boot application with Docker..."
+                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn clean compile test
+                        
+                        echo "Running unit tests..."
+                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn test
+                        
+                        echo "Generating test reports..."
+                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn jacoco:report
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishTestResults testResultsPattern: 'target/surefire-reports/*.xml'
+                    publishCoverage adapters: [jacocoAdapter('target/site/jacoco/jacoco.xml')], sourceFileResolver: sourceFiles('STORE_LAST_BUILD')
+                }
+            }
+        }
+        
+        stage('Code Quality Analysis') {
+            steps {
+                script {
+                    sh '''
+                        echo "Running SonarQube analysis..."
+                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn sonar:sonar \
+                            -Dsonar.projectKey=real-estate-backend \
+                            -Dsonar.host.url=${SONARQUBE_URL} \
+                            -Dsonar.login=${SONARQUBE_TOKEN} \
+                            -Dsonar.java.binaries=target/classes \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                            -Dsonar.sources=src/main/java \
+                            -Dsonar.tests=src/test/java
+                    '''
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                script {
+                    sh '''
+                        echo "Running OWASP dependency check..."
+                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn org.owasp:dependency-check-maven:check
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'target',
+                        reportFiles: 'dependency-check-report.html',
+                        reportName: 'OWASP Dependency Check Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh '''
+                        echo "Building Docker image..."
+                        docker build -t ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG} .
+                        docker build -t ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:latest .
+                        
+                        echo "Tagging image with git commit..."
+                        docker tag ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${GIT_COMMIT_SHORT}
+                    '''
+                }
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS, usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh '''
+                            echo "Logging into Docker Hub..."
+                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
+                            
+                            echo "Pushing images to Docker Hub..."
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${GIT_COMMIT_SHORT}
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Local Registry') {
+            steps {
+                script {
+                    sh '''
+                        echo "Tagging for local registry..."
+                        docker tag ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG} localhost:5000/${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+                        
+                        echo "Pushing to local registry..."
+                        docker push localhost:5000/${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+                    '''
+                }
+            }
+        }
+        
+        stage('Integration Tests') {
+            steps {
+                script {
+                    sh '''
+                        echo "Running integration tests with Docker Compose..."
+                        docker-compose -f ../ci-stack/docker-compose.yml up -d
+                        sleep 30
+                        
+                        # Run integration tests here
+                        ./mvnw verify -P integration-test
+                    '''
+                }
+            }
+            post {
+                always {
+                    sh 'docker-compose -f ../ci-stack/docker-compose.yml down'
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                sh '''
+                    echo "Cleaning up Docker images..."
+                    docker rmi ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG} || true
+                    docker rmi ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:latest || true
+                    docker rmi localhost:5000/${DOCKER_IMAGE_NAME}:${DOCKER_TAG} || true
+                '''
+            }
+        }
+        success {
+            script {
+                echo "Pipeline completed successfully!"
+                // Send notification to team
+                emailext (
+                    subject: "✅ Backend Build Success - Build #${BUILD_NUMBER}",
+                    body: "The backend build completed successfully.\n\nBuild: ${BUILD_URL}\nCommit: ${GIT_COMMIT_SHORT}\nDocker Image: ${DOCKER_REGISTRY}/${DOCKER_IMAGE_NAME}:${DOCKER_TAG}",
+                    to: "team@realestate-dapp.com"
+                )
+            }
+        }
+        failure {
+            script {
+                echo "Pipeline failed!"
+                // Send failure notification
+                emailext (
+                    subject: "❌ Backend Build Failed - Build #${BUILD_NUMBER}",
+                    body: "The backend build failed.\n\nBuild: ${BUILD_URL}\nCommit: ${GIT_COMMIT_SHORT}\nCheck the logs for details.",
+                    to: "team@realestate-dapp.com"
+                )
+            }
+        }
+    }
+}
