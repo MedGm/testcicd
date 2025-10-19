@@ -46,10 +46,7 @@ pipeline {
                 script {
                     sh '''
                         echo "Building Spring Boot application with Docker (sharing Jenkins volume)..."
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn -B clean compile test
-
-                        echo "Generating test reports..."
-                        docker run --rm --volumes-from jenkins -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn -B jacoco:report
+                        docker run --rm --volumes-from jenkins -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn -B clean test
                     '''
                 }
             }
@@ -66,14 +63,18 @@ pipeline {
                 script {
                     sh '''
                         echo "Running SonarQube analysis..."
+                        COV_ARG=""
+                        if [ -f "$WORKSPACE/backend/target/site/jacoco/jacoco.xml" ]; then
+                          COV_ARG="-Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
+                        fi
                         docker run --rm --volumes-from jenkins -w "$WORKSPACE/backend" maven:3.9-eclipse-temurin-17 mvn sonar:sonar \
                             -Dsonar.projectKey=real-estate-backend \
                             -Dsonar.host.url=${SONARQUBE_URL} \
                             -Dsonar.login=${SONARQUBE_TOKEN} \
                             -Dsonar.java.binaries=target/classes \
-                            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
                             -Dsonar.sources=src/main/java \
-                            -Dsonar.tests=src/test/java
+                            -Dsonar.tests=src/test/java \
+                            $COV_ARG
                     '''
                 }
             }
