@@ -46,10 +46,10 @@ pipeline {
                 script {
                     sh '''
                         echo "Building Spring Boot application with Docker..."
-                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn -B -f /app/backend/pom.xml clean compile test
+                        docker run --rm -v "$PWD/backend":/app -w /app maven:3.9-eclipse-temurin-17 mvn -B clean compile test
 
                         echo "Generating test reports..."
-                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn -B -f /app/backend/pom.xml jacoco:report
+                        docker run --rm -v "$PWD/backend":/app -w /app maven:3.9-eclipse-temurin-17 mvn -B jacoco:report
                     '''
                 }
             }
@@ -66,14 +66,14 @@ pipeline {
                 script {
                     sh '''
                         echo "Running SonarQube analysis..."
-                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn -f /app/backend/pom.xml sonar:sonar \
+                        docker run --rm -v "$PWD/backend":/app -w /app maven:3.9-eclipse-temurin-17 mvn sonar:sonar \
                             -Dsonar.projectKey=real-estate-backend \
                             -Dsonar.host.url=${SONARQUBE_URL} \
                             -Dsonar.login=${SONARQUBE_TOKEN} \
-                            -Dsonar.java.binaries=/app/backend/target/classes \
-                            -Dsonar.coverage.jacoco.xmlReportPaths=/app/backend/target/site/jacoco/jacoco.xml \
-                            -Dsonar.sources=/app/backend/src/main/java \
-                            -Dsonar.tests=/app/backend/src/test/java
+                            -Dsonar.java.binaries=/app/target/classes \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=/app/target/site/jacoco/jacoco.xml \
+                            -Dsonar.sources=/app/src/main/java \
+                            -Dsonar.tests=/app/src/test/java
                     '''
                 }
             }
@@ -84,7 +84,7 @@ pipeline {
                 script {
                     sh '''
                         echo "Running OWASP dependency check..."
-                        docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-17 mvn -f /app/backend/pom.xml org.owasp:dependency-check-maven:check
+                        docker run --rm -v "$PWD/backend":/app -w /app maven:3.9-eclipse-temurin-17 mvn org.owasp:dependency-check-maven:check
                     '''
                 }
             }
