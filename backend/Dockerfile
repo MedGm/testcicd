@@ -27,7 +27,7 @@ RUN apk add --no-cache curl
 COPY --from=builder /app/target/*.jar app.jar
 
 # Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN addgroup -g 1001 -S appuser && adduser -S -D -H -u 1001 -h /app -s /sbin/nologin -G appuser appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
